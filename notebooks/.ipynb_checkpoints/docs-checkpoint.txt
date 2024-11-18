@@ -1,0 +1,688 @@
+01-config
+This defines a Python class named Config. It’s typically used to store various settings, like file paths, database names, or other configuration values needed for your ETL or data pipeline processes.
+A class with 4 config variables.
+1.directory location datazone
+2.checkpoint location
+3.database name
+4.maxFilesperTrigger
+self.maxFilesPerTrigger = 1000
+This value is used to limit the number of files that should be processed per trigger in a streaming job. This is useful for controlling the load and ensuring the job doesn't process too many files at once, which could lead to performance issues or out-of-memory errors.
+Purpose: This setting is useful for managing streaming jobs in Databricks when processing data incrementally.
+
+Why Each Functionality Is Used
+Dynamic Path Resolution: By using spark.sql("describe external location ..."), the code dynamically fetches the URLs for both the data and checkpoint locations, which can change based on the environment or configuration. This is flexible and scalable for different setups.
+
+Checkpointing: The checkpoint location ensures that if the job fails, you can restart it from the last successful state. This is important for data pipelines where exact data consistency is critical (for example, in ETL pipelines).
+
+Max Files Per Trigger: Limiting the number of files per trigger prevents overloading the system with too many files in streaming scenarios. This helps maintain a balance between processing speed and system resources.
+Potential Interview Questions
+What is the purpose of using describe external location in this code?
+
+The interviewer might ask about the use of Spark SQL to query metadata for external locations. You could explain that it helps dynamically fetch the URL for data and checkpoint locations, which is more flexible than hardcoding them.
+Why is it important to use checkpointing in a data pipeline?
+
+The interviewer may ask about the checkpoint functionality. You should mention how it ensures the pipeline is fault-tolerant and can resume from the last successful point without reprocessing the entire data set.
+How does the maxFilesPerTrigger parameter affect a streaming job?
+
+They may inquire about the impact of this parameter on job performance and how it can help in throttling the number of files processed per batch to optimize resource usage.
+What happens if the checkpoint directory is not defined in a streaming job?
+
+This question tests your understanding of fault tolerance in Spark Streaming jobs. Without checkpointing, the job would restart from the beginning if it fails, causing potential data duplication or loss.
+
+
+
+
+02.setup
+importing the config notebook
+Create a SetupHelper class. All setup related function will be here.
+There are functions to create each table.
+
+Why Each Functionality Is Used
+Database and Table Creation: These functions ensure that the required tables and views are created in a structured manner. The use of IF NOT EXISTS ensures that the tables are only created if they do not already exist.
+
+Views for Reporting: The gym_summary view allows you to easily query aggregated data across multiple tables, reducing the need for complex joins every time you need this information.
+
+Setup, Validation, and Cleanup:
+
+setup: Automates the creation of all necessary structures (database, tables, views).
+validate: Ensures that everything is correctly set up before further operations.
+cleanup: Cleans up the environment, ensuring that no residual data or resources remain after the process is complete.
+
+Potential Interview Questions
+Why do you use CREATE DATABASE IF NOT EXISTS in the code?
+
+The interviewer may want to understand why the database creation is conditional. You can explain that IF NOT EXISTS prevents the database from being recreated if it already exists, avoiding errors in the setup process.
+What is the importance of CREATE OR REPLACE TABLE and how does it differ from CREATE TABLE IF NOT EXISTS?
+
+They might ask about the difference between these two commands. You can mention that CREATE OR REPLACE will replace the existing table, while IF NOT EXISTS ensures that a new table is created only if one doesn’t already exist.
+Why are views like gym_summary used in the setup?
+
+This question tests your understanding of views in databases. You can explain that views allow for pre-defined, reusable queries, which simplifies reporting and querying, especially for aggregations or joins.
+What is the role of dbutils.fs.rm in the cleanup function?
+
+The interviewer might ask about cleaning up resources. You should explain that this command is used to delete files or directories from the Databricks file system, ensuring no leftover data remains after the job.
+How would you handle situations where a table schema changes in a live environment?
+
+This question would test how you approach evolving schemas. You could discuss using ALTER TABLE commands to modify table structures or using schema evolution techniques if the changes are incremental.
+
+
+
+03-history-loader
+HistoryLoader, which is responsible for loading and validating historical data into a database.
+we don't have historical data for this project but if wehhave we follow these two steps
+ingest the data from on-premise to the cloud storage
+write the history loader function
+Points to Note:
+Error Handling: The code uses assert to validate conditions like table counts.
+Efficiency: The load_history function appears efficient, but it only loads one table (date_lookup) for now.
+Assumptions: It assumes that the date_lookup table must have exactly 365 records, which fits a year’s worth of data.
+
+04-bronze
+Bronze class, which is responsible for consuming data into the bronze layer (the first stage in a medallion architecture). It processes data streams, stores them in Delta tables, and validates them.
+Batch Processing approach or stream processsing approach
+1.supports batch run at regular intrval
+2.supports continuous streaming run
+3.automatic checkpoint
+4.automatic restart
+
+
+consume_user_registration(self, once=True, processing_time="5 seconds")
+Purpose: Consumes data from the "registered_users_bz" directory and loads it into the bronze layer.
+Key Points:
+Reads streaming data from CSV files, with schema defined for user registration.
+Adds load_time and source_file columns to capture the ingestion time and file name.
+Writes to a Delta table (registered_users_bz) in append mode.
+Supports streaming in either continuous (processing_time) or batch mode (availableNow).
+Uses checkpointing to ensure the progress of the stream is saved.
+consume_gym_logins(self, once=True, processing_time="5 seconds")
+Purpose: Consumes data from the "gym_logins_bz" directory and loads it into the bronze layer.
+Key Points:
+Reads streaming data from CSV files, with schema defined for gym logins.
+Adds load_time and source_file columns for tracking.
+Writes the stream data to a Delta table (gym_logins_bz), using append mode and checkpointing.
+consume_kafka_multiplex(self, once=True, processing_time="5 seconds")
+Purpose: Consumes data from the "kafka_multiplex_bz" directory, joins it with the date_lookup table, and loads it into the bronze layer.
+Key Points:
+Reads streaming data from JSON files with a schema for Kafka records.
+Joins the stream data with the date_lookup table based on the timestamp.
+Writes the result to a Delta table (kafka_multiplex_bz), ensuring data is appended using checkpointing.
+consume(self, once=True, processing_time="5 seconds")
+Purpose: Orchestrates the consumption of data for the entire bronze layer by calling the consume_* methods.
+Key Points:
+Calls the methods for user registration, gym logins, and Kafka multiplex data.
+Handles continuous streaming or batch processing (based on the once parameter).
+Uses awaitTermination() to keep the streaming job running if once is set to True.
+assert_count(self, table_name, expected_count, filter="true")
+Purpose: Validates the record count in a specified table.
+Key Points:
+Checks the number of records in the given table and applies an optional filter (e.g., topic='user_info').
+If the actual count doesn’t match the expected count, it raises an assertion error.
+validate(self, sets)
+Purpose: Runs validation on the bronze layer data after ingestion.
+Key Points:
+Validates that the registered_users_bz, gym_logins_bz, and kafka_multiplex_bz tables have the expected record counts.
+The validation count is based on the sets parameter, which likely corresponds to the number of data sets being processed.
+Key Concepts:
+Delta Tables: Data is written to Delta tables in append mode to ensure it is treated as immutable and optimally managed.
+Streaming Data: The use of readStream allows the ingestion of real-time streaming data from raw files (e.g., CSV and JSON files).
+Checkpointing: Ensures that the streaming process can resume from where it left off in case of failure.
+Join with Lookup Tables: The kafka_multiplex stream joins with the date_lookup table to enrich the data before storing it.
+Improvements & Considerations:
+Error Handling: While data ingestion is well-defined, you might want to consider adding more robust error handling (e.g., catching exceptions in case of failed reads or writes).
+Scalability: Depending on data volume, you may want to adjust configurations such as maxFilesPerTrigger or the checkpointing frequency.
+Performance: The awaitTermination() in consume() ensures the process runs continuously, but performance tuning (e.g., adjusting batch sizes) can further optimize it.
+
+
+1. What is the purpose of the Bronze class in your code?
+Answer:
+The Bronze class is responsible for ingesting raw data into the bronze layer of a medallion architecture. It processes data from various sources (e.g., user registrations, gym logins, and Kafka multiplex data) using streaming data pipelines. It writes the ingested data into Delta tables, which ensures that data is stored efficiently with support for ACID transactions and schema enforcement. The class uses Apache Spark's structured streaming capabilities to process data in real-time or in micro-batches, depending on the configuration.
+
+2. What is the significance of using readStream in Spark?
+Answer:
+The readStream method is used in Apache Spark for reading data streams. It allows Spark to consume data from sources like files, Kafka, or other streaming systems. Unlike read, which is used for batch processing, readStream enables continuous processing of incoming data in real-time or in micro-batches. This is essential for applications like real-time analytics, where the data arrives continuously and needs to be processed as it arrives. In the notebook, readStream is used to ingest raw data from sources like CSV files and Kafka, and it is further processed and stored in Delta tables.
+
+3. What is the role of checkpointing in streaming data processing?
+Answer:
+Checkpointing is crucial in streaming data processing to ensure fault tolerance and recovery. In the notebook, Spark writes the processed data into Delta tables in append mode and saves the streaming progress in a checkpoint directory. This ensures that if the system fails, it can resume processing from the last successful checkpoint, avoiding data loss or duplication. It also ensures that the state of the streaming job (e.g., offsets or batch progress) is preserved, allowing the stream to be restarted without reprocessing all the data.
+
+4. How does the code ensure data consistency when ingesting multiple streams into Delta tables?
+Answer:
+Data consistency is ensured by using Delta tables for storage. Delta Lake provides ACID transaction guarantees, which ensures that even if there are failures or multiple streams writing to the same table, the data remains consistent. In the notebook, the streaming data is written in "append" mode, meaning the incoming data is added to the existing data in the Delta table without altering the previously ingested data. The use of checkpointing ensures that even if the system crashes, the data can be processed from the last known good state without duplication or loss.
+
+5. Explain the use of queryName in the stream writer.
+Answer:
+The queryName in the stream writer is used to assign a name to the structured streaming query. This name is used for monitoring and logging purposes, making it easier to identify and troubleshoot streaming jobs. In the notebook, the queryName is set to a specific string (e.g., "registered_users_bz_ingestion_stream") for each stream, which helps differentiate between different streams that are running in parallel, such as those for user registration, gym logins, and Kafka multiplex data.
+
+6. What does the trigger function do in the context of streaming?
+Answer:
+The trigger function in Spark Structured Streaming controls the frequency of how often a micro-batch is processed in a streaming query. The trigger function can be set to different types:
+
+availableNow: Processes all the available data in the stream and stops once the data is processed. This is a batch-like behavior where the data is ingested once.
+processingTime: Defines the time interval (e.g., "5 seconds") after which the micro-batch should be processed. This is used for continuous data ingestion where new data is processed periodically in fixed intervals.
+In the notebook, trigger is used to control whether the data is processed continuously (processingTime) or just once (availableNow), based on the once flag passed to the method.
+
+7. How is the consume method used in this notebook, and what does it do?
+Answer:
+The consume method orchestrates the data ingestion from multiple sources into the bronze layer by calling the specific stream consumption methods for user registrations, gym logins, and Kafka multiplex data. It handles the logic for processing data in a batch or continuous manner, based on the once flag. If once is set to True, it processes the available data once and stops; otherwise, it keeps processing data in micro-batches at the specified processingTime interval. This method also ensures that the streams are monitored and terminated once all data is processed if once=True.
+
+8. What is the purpose of the assert_count method, and how is it used for validation?
+Answer:
+The assert_count method is used to validate the number of records in a Delta table after data has been ingested. It reads the table from the catalog and compares the actual record count against the expected count. If the counts don’t match, it raises an assertion error. This method is critical for ensuring data accuracy and integrity after the ingestion process. In the notebook, it's used in the validate method to check whether the bronze layer tables (registered_users_bz, gym_logins_bz, kafka_multiplex_bz) contain the expected number of records based on different data sets.
+
+9. What are the advantages of using Delta Lake in this notebook for stream processing?
+Answer:
+Delta Lake provides several advantages in this notebook for streaming data processing:
+
+ACID Transactions: Ensures consistency and correctness of data even during streaming ingestion, with transactional guarantees.
+Schema Evolution: Allows automatic handling of schema changes, which is useful when the incoming data changes over time.
+Time Travel: Enables querying of historical data (versioned data), which is valuable for debugging and auditing.
+Efficient Reads/Writes: Delta optimizes both batch and streaming data processing, making it suitable for large-scale data pipelines.
+Support for Streaming: Delta Lake natively supports structured streaming, allowing seamless integration with Spark’s streaming engine.
+10. How is the join operation used in the consume_kafka_multiplex method?
+Answer:
+In the consume_kafka_multiplex method, a join operation is performed between the incoming stream data and the date_lookup table. The data from the Kafka multiplex stream contains a timestamp, which is converted to a date and compared to the date column in the date_lookup table. This enriches the incoming data with the week_part column from the lookup table. The join is a left join, meaning that all records from the stream are kept, even if there’s no match in the date_lookup table.
+
+
+
+
+
+
+
+05-silver
+1. Upsert Functions
+Each of the functions (upsert_user_bins, upsert_completed_workouts, upsert_workout_bpm) is responsible for processing and inserting or updating data in the corresponding tables (in a Delta Lake format) using the MERGE INTO SQL command.
+
+MERGE INTO: This SQL command is used for upserts (insert or update), meaning that if a record with a matching key (like user_id, workout_id, etc.) exists, it will be updated; otherwise, a new record will be inserted.
+2. Upsert User Bins (upsert_user_bins)
+This function merges data from the user_bins_delta table into the user_bins table based on matching user_id.
+
+Key Points:
+It uses a Delta Lake table (user_bins), and performs an upsert using the MERGE INTO statement.
+It reads data from a stream (user_profile table) using spark.readStream and joins it with the users table on the user_id.
+It selects and processes columns like user_id, dob (date of birth), gender, city, state, and applies a function (self.age_bins) to calculate age bins based on the dob.
+The stream is written back using writeStream, and the foreachBatch function is used to apply the Upserter class to the data (responsible for running the upsert query).
+The stream triggers either immediately (availableNow=True) or after a defined processing time (processingTime=processing_time).
+3. Upsert Completed Workouts (upsert_completed_workouts)
+This function handles the upsert of completed workout records.
+
+Key Points:
+It uses MERGE INTO to update or insert records in the completed_workouts table based on matching user_id, workout_id, and session_id.
+It reads data from the workouts table (action = 'start' for the start of a workout and action = 'stop' for the end).
+A join is performed between the start and stop workout streams, ensuring that a valid workout session is only processed if the stop_time is within 3 hours of the start_time.
+The processed data is then used for the upsert operation.
+4. Upsert Workout BPM (upsert_workout_bpm)
+This function processes heart rate (bpm) data and merges it with completed workouts.
+
+Key Points:
+The MERGE INTO operation merges workout_bpm_delta into workout_bpm based on user_id, workout_id, session_id, and time.
+It reads from two streams:
+The completed_workouts stream, joined with users to get additional details.
+The heart_rate stream, filtering for valid heart rate data.
+The heart rate data (bpm) is only valid if it falls within the start_time and end_time of a completed workout.
+It performs a similar 3-hour validity check (end_time < bpm.time + 3 hours), ensuring that heart rate data is not too old compared to the workout session.
+This processed data is used for the upsert operation.
+5. Helper Functions
+_await_queries(self, once):
+
+This method waits for all active streams to finish processing, ensuring that the upsert operations complete before the job ends. If once is True, it waits for one-time batch execution; otherwise, it waits for continuous processing.
+upsert(self, once=True, processing_time="5 seconds"):
+
+This is the main function that triggers the upsert for multiple datasets sequentially, including users, gym_logs, user_profile, workouts, heart_rate, user_bins, completed_workouts, and workout_bpm.
+The function then calls _await_queries to ensure all streams finish.
+6. Assertions and Validations
+assert_count:
+
+This method validates that the number of records in a given table matches the expected count, based on a filter. This is used to ensure that the data processing pipeline is correctly processing records and that the tables hold the expected number of rows.
+validate(self, sets):
+
+This method validates record counts across multiple tables, printing success or failure for each count. The expected counts can vary depending on the dataset size (1 or 2 sets).
+Conclusion
+This notebook is designed to upsert data into Delta Lake tables using streaming data from various sources like user profiles, workouts, and heart rate data.
+It ensures the integrity of the data using MERGE INTO for idempotency, only updating existing records when needed.
+The streaming part allows for real-time processing of data, with batch updates processed at specific intervals (processingTime) or as one-time batches (availableNow).
+The validation functions ensure the expected number of records in each table.
+
+
+
+
+
+06-gold
+1. Class Upserter
+The Upserter class is a utility class designed to execute upsert operations (insert or update) on a given table.
+
+Constructor (__init__):
+
+merge_query: A SQL merge query to execute the upsert.
+temp_view_name: The name of the temporary view in Spark SQL that will be used for the merge operation.
+Method (upsert):
+
+This method accepts a DataFrame (df_micro_batch) representing a micro-batch and a batch_id.
+The df_micro_batch is registered as a temporary view using createOrReplaceTempView().
+The upsert operation is performed using sql() by executing the merge_query on the temporary view (df_micro_batch).
+2. Class Gold
+The Gold class represents the gold layer of the data pipeline. It handles upserts into gold-tier tables, data validation, and checkpoints for processing streams.
+
+Constructor (__init__):
+Initializes various configurations like:
+test_data_dir: The directory for test data.
+checkpoint_base: The base path for checkpoint storage.
+catalog and db_name: The catalog and database where the data resides.
+maxFilesPerTrigger: A configuration to limit the number of files processed per trigger.
+Sets the active database for Spark SQL using spark.sql(f"USE {self.catalog}.{self.db_name}").
+3. Upsert Method for workout_bpm_summary
+The upsert_workout_bpm_summary method is responsible for the upsert operation for the workout_bpm_summary table.
+
+Key Operations:
+
+A MERGE INTO SQL query is defined, which performs an upsert between the workout_bpm_summary table and workout_bpm_summary_delta table, based on the user_id, workout_id, and session_id.
+The data for the upsert is read from the workout_bpm table as a streaming DataFrame.
+Watermarking (.withWatermark("end_time", "30 seconds")) ensures that late-arriving records are handled correctly.
+The data is aggregated using groupBy and agg to calculate minimum, average, maximum BPM (heart rate) and the number of recordings.
+The df_users table (likely containing user-related information) is joined with the workout_bpm data.
+The processed data is written to a temporary Delta table (workout_bpm_summary_delta) using the upsert logic provided by the Upserter class.
+Stream Writer:
+
+The resulting DataFrame is written using writeStream with foreachBatch to apply the upsert logic via the Upserter class.
+The checkpointLocation ensures that the stream is fault-tolerant, and the query is assigned a name ("workout_bpm_summary_upsert_stream").
+Trigger Options:
+
+The stream can be triggered in two ways:
+Once (availableNow=True): Triggers the upsert operation once for the available data.
+Continuous Processing (processingTime): Triggers the upsert at the specified time interval (e.g., every 15 seconds).
+4. upsert Method
+The upsert method is a high-level function to trigger the upsert process for the gold layer.
+
+Key Operations:
+It calls the upsert_workout_bpm_summary method to perform the upsert on the workout_bpm_summary table.
+If the once parameter is True, it waits for the stream to process all available data (awaitTermination).
+It logs the time taken to complete the upsert.
+5. Data Validation Methods
+These methods are used to validate the correctness of the data after processing and upserting.
+
+assert_count:
+
+This method validates that the count of records in a given table matches the expected count (expected_count), optionally applying a filter condition. If the count doesn't match, it raises an assertion error.
+assert_rows:
+
+This method validates that the actual rows in a table match the expected rows. The expected rows are loaded from a Parquet file stored in test_data_dir, and the method compares them with the actual rows in the target table.
+validate:
+
+This method validates the gold layer tables by calling assert_rows and assert_count to check the correctness of data. It validates the gym_summary table and the workout_bpm_summary table (if the sets parameter is greater than 1).
+Conclusion
+This notebook is primarily responsible for performing upsert operations on the gold layer tables, specifically for workout BPM data (workout_bpm_summary). The data is processed using structured streaming, and the processed data is upserted into Delta tables using the MERGE INTO SQL command.
+
+The Gold class allows you to trigger the upsert process either once or continuously, validate the records after upsert, and ensure data consistency by comparing actual records with expected data.
+
+
+
+
+07-run
+This notebook is the main orchestrator of your data pipeline, running through the various stages: bronze, silver, and gold layers, with a setup to control whether the pipeline runs in batch mode or streaming mode.
+1. Widgets and Parameters
+python
+Copy code
+dbutils.widgets.text("Environment", "dev", "Set the current environment/catalog name")
+dbutils.widgets.text("RunType", "once", "Set once to run as a batch")
+dbutils.widgets.text("ProcessingTime", "5 seconds", "Set the microbatch interval")
+These widgets allow you to pass in configuration parameters when running the notebook:
+Environment: Specifies the catalog/environment name (default is "dev").
+RunType: Specifies whether the pipeline should run in batch mode or streaming mode. "once" is used for batch processing, and "stream" would trigger streaming.
+ProcessingTime: Sets the microbatch interval (for streaming mode).
+The values are retrieved using dbutils.widgets.get() and stored in variables like env, once, and processing_time.
+
+2. Pipeline Mode Setup
+python
+Copy code
+if once:
+    print(f"Starting sbit in batch mode.")
+else:
+    print(f"Starting sbit in stream mode with {processing_time} microbatch.")
+This section checks if once is set to True (for batch mode) or False (for streaming mode). It prints an appropriate message based on the mode.
+3. Spark Configuration
+python
+Copy code
+spark.conf.set("spark.sql.shuffle.partitions", sc.defaultParallelism)
+spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", True)
+spark.conf.set("spark.databricks.delta.autoCompact.enabled", True)
+spark.conf.set("spark.sql.streaming.stateStore.providerClass", "com.databricks.sql.streaming.state.RocksDBStateStoreProvider")
+This section sets several important configurations:
+spark.sql.shuffle.partitions: Sets the number of shuffle partitions based on the default parallelism.
+Delta Lake Optimizations: Ensures optimized writes and auto-compaction are enabled for Delta tables.
+State Store: Configures the state store provider class for streaming to use RocksDB, which is efficient for managing the state of streaming jobs.
+4. Running Setup and History Loader
+python
+Copy code
+SH = SetupHelper(env)
+HL = HistoryLoader(env)
+Initializes the SetupHelper and HistoryLoader classes, passing the env (environment) as a parameter.
+python
+Copy code
+setup_required = spark.sql(f"SHOW DATABASES IN {SH.catalog}").filter(f"databaseName == '{SH.db_name}'").count() != 1
+if setup_required:
+    SH.setup()
+    SH.validate()
+    HL.load_history()
+    HL.validate()
+else:
+    spark.sql(f"USE {SH.catalog}.{SH.db_name}")
+Database Setup: This checks if the required database exists in the specified catalog (SH.catalog). If not, it calls SH.setup() to set up the database and HL.load_history() to load historical data.
+If the database is already set up, it simply uses that database (USE statement).
+5. Running the Bronze, Silver, and Gold Layers
+python
+Copy code
+# Run bronze layer
+BZ = Bronze(env)
+BZ.consume(once, processing_time)
+Initializes the Bronze class (for the raw data layer) and calls its consume() method to either process data in batch or streaming mode.
+python
+Copy code
+# Run silver layer
+SL = Silver(env)
+SL.upsert(once, processing_time)
+Initializes the Silver class (for transforming and cleaning data) and calls its upsert() method to handle the upsert for silver data.
+python
+Copy code
+# Run gold layer
+GL = Gold(env)
+GL.upsert(once, processing_time)
+Initializes the Gold class (for the final transformed data layer) and calls its upsert() method to handle the upsert for gold data.
+Summary
+This notebook acts as an orchestrator for the end-to-end pipeline across different layers (bronze, silver, gold). It:
+
+Sets up the environment based on widget inputs (e.g., environment, run type, processing time).
+Configures Spark settings to optimize performance for Delta Lake and streaming operations.
+Runs setup and history loading if the environment is not already initialized.
+Executes the data processing pipeline through:
+Bronze: Consumes raw data.
+Silver: Transforms and cleans the data.
+Gold: Applies upserts for the final enriched data.
+It supports both batch mode (once) and streaming mode (with defined processing intervals). The modular approach allows each layer to be processed independently while sharing the same orchestration logic.
+
+
+
+
+
+08-batch-test
+This notebook serves as a controller for the entire pipeline execution, managing the flow from:
+
+Setup: It ensures that the environment is ready by cleaning up and running setup/validation processes.
+Data Production: It produces the first and second batches of data using the Producer class and validates them.
+Processing Layers: It runs the Bronze, Silver, and Gold layers for both batches, validating each layer after processing.
+Pipeline Execution: It triggers the 07-run notebook multiple times to process the data, ensuring that all necessary transformations and upserts happen.
+Cleanup: After the entire pipeline runs, the setup is cleaned up for future runs.
+
+
+
+09-stream-test
+This notebook manages the full lifecycle of a Databricks streaming job, including:
+
+Job Creation: It creates a job with a notebook to process data in streaming mode.
+Triggering the Job: It triggers the job and waits for it to start.
+Data Processing: It runs various stages (history loading, data production, transformation in bronze, silver, and gold layers) and validates the results.
+Job Termination: It waits for the job to process the data, then cancels and deletes the job to clean up resources.
+The notebook orchestrates both the creation and execution of a Databricks streaming job while ensuring the validation of data at each stage.
+
+
+
+
+
+10-producer
+This Databricks notebook defines a class Producer that simulates the production and validation of test data for various components, such as user registrations, profile changes, workout data, and gym logins. Here's a detailed breakdown of the code:
+
+1. Imports and Configuration
+python
+Copy code
+# MAGIC %run ./01-config
+The %run command loads a configuration notebook (01-config), which likely contains settings like file paths, directory locations, or other environment-specific configurations.
+2. Producer Class Definition
+python
+Copy code
+class Producer():
+    def __init__(self):
+        self.Conf = Config()
+        self.landing_zone = self.Conf.base_dir_data + "/raw"
+        self.test_data_dir = self.Conf.base_dir_data + "/test_data"
+The Producer class is initialized with:
+self.Conf: A configuration object that is loaded from Config().
+self.landing_zone: Directory for landing raw data.
+self.test_data_dir: Directory for storing test data files.
+3. Methods for Producing Data
+Each method simulates the production of a specific type of test data and moves it to the appropriate "landing zone" for raw data processing.
+
+User Registration Data
+python
+Copy code
+def user_registration(self, set_num):
+    source = f"{self.test_data_dir}/1-registered_users_{set_num}.csv"
+    target = f"{self.landing_zone}/registered_users_bz/1-registered_users_{set_num}.csv" 
+    print(f"Producing {source}...", end='')
+    dbutils.fs.cp(source, target)
+    print("Done")
+Copies user registration data (CSV files) from the test_data_dir to the landing_zone under the appropriate folder (registered_users_bz).
+Profile Change Data (CDC)
+python
+Copy code
+def profile_cdc(self, set_num):
+    source = f"{self.test_data_dir}/2-user_info_{set_num}.json"
+    target = f"{self.landing_zone}/kafka_multiplex_bz/2-user_info_{set_num}.json"
+    print(f"Producing {source}...", end='')
+    dbutils.fs.cp(source, target)
+    print("Done")
+Copies profile change data (JSON files) to a different folder (kafka_multiplex_bz).
+Workout Data
+python
+Copy code
+def workout(self, set_num):
+    source = f"{self.test_data_dir}/4-workout_{set_num}.json"
+    target = f"{self.landing_zone}/kafka_multiplex_bz/4-workout_{set_num}.json"
+    print(f"Producing {source}...", end='')
+    dbutils.fs.cp(source, target)
+    print("Done")
+Copies workout data (JSON files) to the kafka_multiplex_bz folder.
+BPM Data
+python
+Copy code
+def bpm(self, set_num):
+    source = f"{self.test_data_dir}/3-bpm_{set_num}.json"
+    target = f"{self.landing_zone}/kafka_multiplex_bz/3-bpm_{set_num}.json"
+    print(f"Producing {source}...", end='')
+    dbutils.fs.cp(source, target)
+    print("Done")
+Copies BPM (heart rate) data (JSON files) to the kafka_multiplex_bz folder.
+Gym Login Data
+python
+Copy code
+def gym_logins(self, set_num):
+    source = f"{self.test_data_dir}/5-gym_logins_{set_num}.csv"
+    target = f"{self.landing_zone}/gym_logins_bz/5-gym_logins_{set_num}.csv"
+    print(f"Producing {source}...", end='')
+    dbutils.fs.cp(source, target)
+    print("Done")
+Copies gym login data (CSV files) to the gym_logins_bz folder.
+4. Producing Data Sets
+python
+Copy code
+def produce(self, set_num):
+    import time
+    start = int(time.time())
+    print(f"\nProducing test data set {set_num} ...")
+    if set_num <=2:
+        self.user_registration(set_num)
+        self.profile_cdc(set_num)        
+        self.workout(set_num)
+        self.gym_logins(set_num)
+    if set_num <=10:
+        self.bpm(set_num)
+    print(f"Test data set {set_num} produced in {int(time.time()) - start} seconds")
+This method produces a full test data set by calling the appropriate methods for each data type.
+If set_num <= 2, it produces user registration, profile CDC, workout, and gym logins data.
+If set_num <= 10, it also produces BPM data.
+The execution time for producing the dataset is logged.
+5. Validation Method
+python
+Copy code
+def _validate_count(self, format, location, expected_count):
+    print(f"Validating {location}...", end='')
+    target = f"{self.landing_zone}/{location}_*.{format}"
+    actual_count = (spark.read
+                         .format(format)
+                         .option("header", "true")
+                         .load(target).count())
+    assert actual_count == expected_count, f"Expected {expected_count:,} records, found {actual_count:,} in {location}"
+    print(f"Found {actual_count:,} / Expected {expected_count:,} records: Success")
+Validates the count of records in the landing_zone for a given data type (CSV or JSON).
+It reads the data from the specified location and checks if the number of records matches the expected count.
+If the counts don’t match, an assertion error is raised.
+Main Validation Method
+python
+Copy code
+def validate(self, sets):
+    import time
+    start = int(time.time())
+    print(f"\nValidating test data {sets} sets...")       
+    self._validate_count("csv", "registered_users_bz/1-registered_users", 5 if sets == 1 else 10)
+    self._validate_count("json","kafka_multiplex_bz/2-user_info", 7 if sets == 1 else 13)
+    self._validate_count("json","kafka_multiplex_bz/3-bpm", sets * 253801)
+    self._validate_count("json","kafka_multiplex_bz/4-workout", 16 if sets == 1 else 32)  
+    self._validate_count("csv", "gym_logins_bz/5-gym_logins", 8 if sets == 1 else 16)
+    #print(f"Test data validation completed in {int(time.time()) - start} seconds")
+This method validates multiple datasets based on the number of sets produced.
+It calls _validate_count for each data type (user registrations, profile CDC, BPM, workout, and gym logins), checking that the expected number of records are present in the landing zone.
+Summary
+The Producer class provides functionality to:
+
+Produce test data by copying files from a test data directory to the landing zone for further processing.
+Validate data by checking the record counts in the landing zone to ensure that the expected data was produced.
+The produce() method orchestrates the production of different types of data, while validate() ensures that the correct amount of data exists in each category. This is useful in building a data pipeline that involves generating synthetic test data and verifying the data at different stages.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1. Introduction (30 seconds)
+Brief Overview:
+"I built a data engineering pipeline using the medallion architecture (Bronze, Silver, Gold). The pipeline processes streaming data and transforms it through different stages, from raw ingestion to refined, production-ready data. The project is built on Databricks, leveraging PySpark for data processing and Delta Lake for efficient storage and management."
+2. Key Components (2 minutes)
+Data Ingestion (Bronze Layer):
+"The pipeline ingests raw data from different sources (e.g., user registrations, profile changes, workout data, gym logins) in various formats like CSV and JSON. This data is stored in the Bronze layer. For example, I used dbutils.fs.cp to copy test data files into the landing zone in Databricks."
+
+Transformation (Silver Layer):
+"In the Silver layer, the raw data is cleaned and transformed. I applied schema validation, filtering, and joined various data sources to create more structured and enriched datasets. The transformed data is stored in Delta tables, which offer ACID compliance and allow for efficient querying and versioning."
+
+Business Logic & Aggregations (Gold Layer):
+"The Gold layer consists of processed data ready for analytical purposes. Here, I perform aggregations and join data from different sources to provide a comprehensive view of business metrics. For instance, aggregating user activity, workout data, and gym login details to produce summarized reports."
+
+Streaming (Producer Component):
+"I also implemented a streaming feature where test data is continuously ingested into the pipeline, simulating real-time data processing. This is achieved using Databricks' streaming capabilities, with data pushed into different layers (Bronze, Silver, Gold) as it's received."
+
+3. Validation (1 minute)
+Data Validation:
+"After producing and transforming the data, I validate it at each stage. For example, I check that the number of records in each dataset matches the expected count for a given test set. If the counts don’t match, an assertion error is raised, ensuring the integrity of the data. I also validate the transformation process to ensure that data quality is maintained across all layers."
+4. Technologies Used (30 seconds)
+Tech Stack:
+"The project leverages Databricks for execution and orchestration, PySpark for data processing, and Delta Lake for storage. I also used Azure Data Factory (ADF) for orchestrating batch jobs, and Azure Databricks' REST APIs to automate job creation and management. The pipeline is designed for scalability and performance."
+5. Challenges & Learning (1 minute)
+Challenges:
+"One of the key challenges was managing real-time data ingestion and ensuring that data was consistently processed across different stages. I also had to ensure efficient data partitioning and optimization within Delta Lake tables for fast querying."
+
+Learning:
+"Through this project, I gained hands-on experience with streaming data pipelines, Databricks notebooks, Delta Lake, and the medallion architecture. It also enhanced my understanding of handling large-scale data and making it ready for business analytics."
+
+6. Conclusion (30 seconds)
+Summary:
+"In summary, this project demonstrates how a data engineering pipeline can efficiently process and transform raw data into meaningful business insights using modern tools and architecture. It highlights my ability to design, implement, and validate end-to-end data pipelines."
+
+
+
+
+
+
+
+
+1. Delta Lake & Medallion Architecture:
+What is Delta Lake, and why did you choose it for this project?
+Delta Lake is an open-source storage layer built on top of a data lake that provides ACID transactions, schema enforcement, and data versioning. I chose Delta Lake for several reasons:
+
+ACID Transactions: This ensures that my data pipeline is robust and reliable by making sure that updates to the data are consistent and atomic, meaning either all changes succeed or none are applied.
+Schema Enforcement: Delta Lake enforces schemas on incoming data, which helps prevent issues like schema mismatches and ensures that data conforms to the required structure before being written to the lake.
+Time Travel: Delta Lake allows me to query previous versions of data, which is essential for tracking changes or recovering from mistakes.
+Scalability and Performance: Delta Lake integrates tightly with Apache Spark and optimizes for large-scale, high-performance analytics. This makes it a perfect fit for the project where I’m processing large amounts of data and need to perform both batch and stream processing.
+What is the Medallion Architecture?
+Medallion Architecture is a way to organize data in a lakehouse architecture that separates data into three layers:
+
+Bronze Layer (Raw Data): The first stage where data is ingested in its raw, untransformed form. This data might include errors or duplicates, but it is crucial for auditability and tracking the source data.
+Silver Layer (Cleaned and Transformed Data): After raw data is processed and cleaned, it moves to the Silver layer. Here, data is enriched and validated, ensuring it is ready for analysis or further processing.
+Gold Layer (Business-Ready Data): The final stage, where the data is aggregated, optimized, and transformed into a format that is ideal for reporting or analytics. This is the data that business users interact with.
+This architecture allows for better data governance, incremental processing, and scalability, making it ideal for large data lakes and data pipelines.
+
+How does Delta Lake handle schema evolution?
+Delta Lake provides an easy way to handle schema evolution, which is crucial for large-scale data processing. If new columns are added or existing columns are modified in incoming data, Delta Lake can automatically detect and adjust the schema.
+
+If schema evolution is enabled, Delta Lake allows us to add new columns without breaking the existing pipeline. For example, if a new column is added to a source file, Delta Lake will automatically handle the schema change without needing to stop the pipeline.
+Schema enforcement prevents inconsistent data from being written into Delta tables. If a dataset doesn’t match the schema, the write operation will fail, preventing bad data from propagating through the pipeline.
+2. Databricks & Spark:
+What are the advantages of using Databricks for data engineering?
+Databricks provides an integrated platform for building and managing big data workflows. Some key advantages:
+
+Unified Environment: It offers a collaborative workspace with notebooks that support both Python and SQL. This makes it easy for teams to collaborate and share insights.
+Optimized for Apache Spark: Databricks is built on top of Apache Spark and optimizes Spark jobs with features like autoscaling, caching, and advanced optimizations.
+Scalability: Databricks can automatically scale up or down based on the size of the data being processed. I can run large jobs on a cluster of machines, and Databricks handles the orchestration behind the scenes.
+Delta Lake Integration: Databricks integrates natively with Delta Lake, allowing for high-performance reads and writes with ACID compliance.
+Machine Learning: Databricks offers a fully integrated environment for building machine learning models, making it a one-stop solution for data engineering, analytics, and machine learning.
+What is Spark’s role in your project?
+Spark is the core engine for processing data in this project. It is used for:
+
+Batch Processing: Spark processes large volumes of data efficiently. For instance, I use it to process historical data, clean, and transform it into the Silver layer.
+Stream Processing: Spark Streaming handles real-time data by ingesting data continuously in micro-batches. This is ideal for scenarios where I need to process data in near real-time, such as user activities or sensor readings.
+Distributed Computation: Spark runs on clusters, which means it can scale horizontally to handle massive datasets by distributing the work across multiple nodes.
+What is the difference between batch processing and stream processing in Spark?
+Batch Processing: This involves processing a large volume of data in predefined chunks (batches). In this project, batch processing is used to process historical data or data that doesn’t require immediate action. It is typically slower but more efficient for large-scale data processing.
+Stream Processing: Stream processing involves handling data as it arrives, typically in small chunks (micro-batches). This allows for real-time data processing, such as processing user behavior or sensor data as it’s generated. Spark Streaming helps manage and process this type of data continuously.
+3. Data Validation and Testing:
+How did you validate your data throughout the pipeline?
+I validated the data at every stage of the pipeline to ensure it’s being processed correctly and meets the required quality standards:
+
+At the Bronze Layer: I ensure the raw data is being ingested properly by checking the file formats, record counts, and schema.
+At the Silver Layer: I validate the data transformations and cleansing steps, ensuring that invalid records are filtered out, and necessary enrichments are applied.
+At the Gold Layer: I ensure the data is in the right format and ready for use in reporting and analytics by performing aggregate checks and ensuring the data meets business logic requirements. I also perform checks like ensuring data consistency, completeness, and handling any missing or erroneous values.
+What are some common techniques to handle data quality issues in big data pipelines?
+To ensure data quality in big data pipelines, I use the following techniques:
+
+Data Validation: Ensuring data conforms to a predefined schema and meets business rules.
+Data Cleansing: Identifying and handling missing, incorrect, or outlier data, such as removing duplicates or correcting invalid values.
+Monitoring: Continuously monitoring data for inconsistencies or anomalies. In Databricks, this can be done using job logs and dashboards.
+Error Handling: Using Spark’s error handling capabilities to gracefully deal with invalid data (e.g., logging errors or directing bad data to a separate location for further inspection).
+How do you ensure data consistency and integrity in a streaming pipeline?
+For data consistency in streaming, I use:
+
+Watermarking: In Spark Streaming, watermarking helps handle late-arriving data by defining a threshold for how long the system will wait for late data before processing it.
+Checkpointing: Spark Streaming uses checkpointing to store the state of the stream at regular intervals. If a job fails, it can recover from the last checkpoint without reprocessing the entire stream.
+Exactly-Once Semantics: By enabling exactly-once processing in Spark, I ensure that each record is processed only once, even in the case of failures.
+4. Orchestration and Job Scheduling:
+How did you schedule and orchestrate your jobs in Databricks?
+I used Databricks Jobs to automate the execution of various notebooks. Jobs allow me to run notebooks at scheduled intervals, which is essential for batch processing and real-time pipelines. I also used job clusters to ensure that the right computational resources are available for each job.
+
+Job Dependencies: In some cases, I set up job dependencies to ensure that certain tasks run only after others have completed successfully. This helps in complex workflows where different processes need to run in a specific order.
+Monitoring and Alerts: Databricks allows me to monitor job execution, and I set up alerts to notify me if a job fails or takes longer than expected.
+5. Performance Optimization:
+What are some performance optimization techniques in Spark?
+To optimize the performance of my Spark jobs, I use several strategies:
+
+Partitioning: I partition large datasets by columns like date or region to allow Spark to process data in parallel and reduce the amount of data scanned in each task.
+Caching: Spark allows caching intermediate datasets to memory, which avoids recomputing expensive transformations for frequently used data.
+Broadcasting: For smaller datasets that need to be used across all workers, I use broadcasting. This ensures that small datasets are sent to all nodes instead of being shuffled around, reducing network overhead.
+Tuning Spark Configurations: I adjust Spark configurations like the number of shuffle partitions, executor memory, and cores to optimize the performance for specific workloads.
+
